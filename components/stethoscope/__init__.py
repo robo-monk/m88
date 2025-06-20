@@ -10,6 +10,7 @@ import numpy as np
 import json
 import pygame
 
+OUTPUT_DIR = "thresholds"
 
 def user_select_port():
     port = ""
@@ -159,10 +160,9 @@ def get_current_sensor_state(last_n=5, tolerance=0.7):
 
 
 STATE_FILE = "sensor_state.json"
-
-def save_sensor_state(output_dir):
+def save_sensor_state():
     """Save sensor baselines, thresholds, and mappings to JSON file"""
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     state = {
         "sensor_baselines": sensor_baselines,
@@ -170,17 +170,17 @@ def save_sensor_state(output_dir):
         "sensor_mappings": sensor_mappings
     }
 
-    state_file_path = os.path.join(output_dir, STATE_FILE)
+    state_file_path = os.path.join(OUTPUT_DIR, STATE_FILE)
     with open(state_file_path, 'w') as f:
         json.dump(state, f, indent=2)
 
     print(f"Sensor state saved to {state_file_path}")
 
-def load_sensor_state(output_dir):
+def load_sensor_state():
     """Load sensor baselines, thresholds, and mappings from JSON file"""
     global sensor_baselines, sensor_thresholds, sensor_mappings
 
-    state_file_path = os.path.join(output_dir, STATE_FILE)
+    state_file_path = os.path.join(OUTPUT_DIR, STATE_FILE)
     if not os.path.exists(state_file_path):
         return False
 
@@ -225,8 +225,8 @@ def wait_for_buffers_to_fill():
     hz_per_buffer = BUFFERS_LEN / elapsed_time
     print(f"Hz per buffer: {hz_per_buffer:.2f}")
 
-def calibrate(output_dir):
-    os.makedirs(output_dir, exist_ok = True)
+def calibrate():
+    os.makedirs(OUTPUT_DIR, exist_ok = True)
 
     sensors_aliases = ["Throat", "Heart", "Lungs", "Bowel"]
     wait_for_buffers_to_fill()
@@ -260,15 +260,64 @@ def calibrate(output_dir):
         sensor_mappings[max_index] = alias
 
     # Save the calibrated state
-    save_sensor_state(output_dir)
+    save_sensor_state(OUTPUT_DIR)
     print("Calibration complete! Sensor state has been saved.")
+
+
+def run():
+    if not load_sensor_state(args.output):
+        print("No calibrated sensor state found!")
+        print("Please run the calibrate command first:")
+        print(f"python {__file__} calibrate -p {port}")
+        exit(1)
+
+    # Validate that we have complete sensor configuration
+    if not sensor_baselines or not sensor_thresholds or not sensor_mappings:
+        print("Incomplete sensor configuration loaded!")
+        print("Please recalibrate by running:")
+        print(f"python {__file__} calibrate -p {port}")
+        exit(1)
+
+    print("Starting monitoring with loaded sensor state...")
+    serial_thread.start()
+    wait_for_buffers_to_fill()
+
+    # Main monitoring loop
+    try:
+        while True:
+            if sensor_values:
+                state = get_current_sensor_state()
+                active_sensors = {sensor_mappings.get(i, f"Sensor_{i}"): active
+                                for i, active in state.items() if active}
+
+                if active_sensors:
+                    # Get the first active sensor
+                    active_sensor_alias = list(active_sensors.keys())[0]
+                    print(f"Active: {list(active_sensors.keys())}")
+                    play_sensor_sound(active_sensor_alias)
+                else:
+                    # No sensors active, stop all sounds
+                    stop_all_sounds()
+
+                # Check if current sound finished and sensor is still active
+                if (last_active_sensor and
+                    current_sound_channel and not current_sound_channel.get_busy() and
+                    active_sensors.get(last_active_sensor, False)):
+                    # Restart the sound
+                    play_sensor_sound(last_active_sensor)
+
+            sleep(0.1)
+    except KeyboardInterrupt:
+        print("\nMonitoring stopped.")
+
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stethoscope simulator")
     parser.add_argument("command", nargs="?", help="calibrate | run | status")
     parser.add_argument("-p", "--port", help="Serial port to use (e.g., COM3)")
     parser.add_argument("-b", "--baudrate", help="Baudrate to use (defaults to 115200)", default=115200)
-    parser.add_argument("-o", "--output", help="Output directory to save thresholds", default="thresholds")
     args = parser.parse_args()
 
     port = args.port
@@ -280,56 +329,12 @@ if __name__ == "__main__":
 
     if args.command == "calibrate":
         print("Initializing calibrating sequence")
-
         serial_thread.start()
         print("Waiting for baseline values...")
-        calibrate(args.output)
+        calibrate()
     elif args.command == "run":
         print("Loading sensor state...")
-        if not load_sensor_state(args.output):
-            print("No calibrated sensor state found!")
-            print("Please run the calibrate command first:")
-            print(f"python {__file__} calibrate -p {port}")
-            exit(1)
-
-        # Validate that we have complete sensor configuration
-        if not sensor_baselines or not sensor_thresholds or not sensor_mappings:
-            print("Incomplete sensor configuration loaded!")
-            print("Please recalibrate by running:")
-            print(f"python {__file__} calibrate -p {port}")
-            exit(1)
-
-        print("Starting monitoring with loaded sensor state...")
-        serial_thread.start()
-        wait_for_buffers_to_fill()
-
-        # Main monitoring loop
-        try:
-            while True:
-                if sensor_values:
-                    state = get_current_sensor_state()
-                    active_sensors = {sensor_mappings.get(i, f"Sensor_{i}"): active
-                                    for i, active in state.items() if active}
-
-                    if active_sensors:
-                        # Get the first active sensor
-                        active_sensor_alias = list(active_sensors.keys())[0]
-                        print(f"Active: {list(active_sensors.keys())}")
-                        play_sensor_sound(active_sensor_alias)
-                    else:
-                        # No sensors active, stop all sounds
-                        stop_all_sounds()
-
-                    # Check if current sound finished and sensor is still active
-                    if (last_active_sensor and
-                        current_sound_channel and not current_sound_channel.get_busy() and
-                        active_sensors.get(last_active_sensor, False)):
-                        # Restart the sound
-                        play_sensor_sound(last_active_sensor)
-
-                sleep(0.1)
-        except KeyboardInterrupt:
-            print("\nMonitoring stopped.")
+        run()
     elif args.command == "status":
         print("Checking sensor calibration status...")
         if load_sensor_state(args.output):
