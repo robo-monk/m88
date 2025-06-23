@@ -260,12 +260,12 @@ def calibrate():
         sensor_mappings[max_index] = alias
 
     # Save the calibrated state
-    save_sensor_state(OUTPUT_DIR)
+    save_sensor_state()
     print("Calibration complete! Sensor state has been saved.")
 
 
 def run():
-    if not load_sensor_state(args.output):
+    if not load_sensor_state():
         print("No calibrated sensor state found!")
         print("Please run the calibrate command first:")
         print(f"python {__file__} calibrate -p {port}")
@@ -337,12 +337,13 @@ if __name__ == "__main__":
         run()
     elif args.command == "status":
         print("Checking sensor calibration status...")
-        if load_sensor_state(args.output):
+        if load_sensor_state():
             print("✓ Sensor calibration found and loaded successfully")
         else:
             print("✗ No sensor calibration found")
             print("Please run the calibrate command first:")
             print(f"python {__file__} calibrate")
+
     else:
         print("Command not supported: ", args.command)
         parser.print_help()

@@ -1,28 +1,26 @@
 from enum import Enum
 from threading import Thread
 import time
+from components import vibration_microbe
 from components.stethoscope import run as run_stethoscope
 from dataclasses import dataclass
-from paho.mqtt import client as mqtt_client
-from paho.mqtt.client import CallbackAPIVersion
+from components.tiny_population import run_tiny_population
+from state import State, Country, Bacteria
+from mqtt import mqtt_client
 
-BROKER_HOST = "192.168.1.235"
-BROKER_PORT = 1883
 
 
 # netherlands spain bulgaria
 # Year = Enum("Year", ["_2025", "_2026", "_2027"])
-Country = Enum("Country", ["NL", "ES", "BG"])
-Bacteria = Enum("Bacteria", ["STAPH", "SALMONELLA", "ECOLI"])
-
-@dataclass
-class State:
-    year: int | None = None
-    country: Country | None = None
-    bacteria: Bacteria | None = None
-
+# Country = Enum("Country", ["NL", "ES", "BG"])
+# Bacteria = Enum("Bacteria", ["PSEUDO", "KLEBSIA", "ECOLI"])
 
 state = State()
+
+
+def sync_state():
+    vibration_microbe(state, mqtt_client)
+    run_tiny_population(state, mqtt_client)
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -55,26 +53,24 @@ def on_message(client, userdata, message):
             case "event/stop-installation":
                 print("Stop INSTALLATION")
     except:
-        print("Error unpacking message")            
+        print("Error unpacking message")
 
 
-client = mqtt_client.Client(CallbackAPIVersion.VERSION2)
-client.on_connect = on_connect
-client.on_message = on_message
-client.on_disconnect = on_disconnect
+def test_mqtt():
+    import time
+    time.sleep(1)
+    while True:
+        print("-$-")
+        topic = input("Enter MQTT topic: ")
+        payload = input("Enter MQTT payload: ")
+        mqtt_client.publish(topic, payload)
+        print("Message published")
 
-client.connect(BROKER_HOST, BROKER_PORT, 60)
-client.loop_forever()
 
-# try:
-#     client.connect(BROKER_HOST, BROKER_PORT, 60)
-#     client.loop_start()
+Thread(target=test_mqtt).start()
 
-#     while True:
-#         time.sleep(1)
-# except KeyboardInterrupt:
-#     client.loop_stop()
-#     client.disconnect()
-# finally:
-#     client.loop_stop()
-#     client.disconnect()
+
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
+mqtt_client.on_disconnect = on_disconnect
+

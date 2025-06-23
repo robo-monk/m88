@@ -1,26 +1,26 @@
-#include <WiFi.h>
 #include <PubSubClient.h>
+#include <WiFi.h>
 
 // ====== WiFi Credentials ======
-const char* ssid = "pana";
-const char* password = "bingbong8202";
+const char *ssid = "pana";
+const char *password = "bingbong8202";
 
 // ====== MQTT Settings ======
-const char* mqtt_server = "192.168.1.235";
+const char *mqtt_server = "192.168.1.235";
 const int mqtt_port = 1883;
-const char* mqtt_user = "";
-const char* mqtt_password = "";
+const char *mqtt_user = "";
+const char *mqtt_password = "";
 
-const char* topic_publish = "esp32/sensor";
-const char* topic_subscribe = "esp32/control";
+const char *topic_publish = "esp32/sensor";
+const char *topic_microbe_on = "event/microbe-on";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 // Use GPIO numbers directly for ESP32
-const int pinA = 25;  // Microbe A → GPIO5
-const int pinB = 26;  // Microbe B → GPIO4
-const int pinC = 27;  // Microbe C → GPIO0
+const int pinA = 25; // Microbe A → GPIO5
+const int pinB = 26; // Microbe B → GPIO4
+const int pinC = 27; // Microbe C → GPIO0
 
 int currentPWMpin = -1;
 
@@ -48,12 +48,18 @@ void stimulateMicrobe(char microbe, int resistance) {
   // Determine output pin
   int selectedPin = -1;
   switch (toupper(microbe)) {
-    case 'A': selectedPin = pinA; break;
-    case 'B': selectedPin = pinB; break;
-    case 'C': selectedPin = pinC; break;
-    default:
-      Serial.println("Invalid microbe identifier.");
-      return;
+  case 'K':
+    selectedPin = pinA;
+    break;
+  case 'P':
+    selectedPin = pinB;
+    break;
+  case 'E':
+    selectedPin = pinC;
+    break;
+  default:
+    Serial.println("Invalid microbe identifier.");
+    return;
   }
 
   // Reset other PWM pins
@@ -73,19 +79,20 @@ void stimulateMicrobe(char microbe, int resistance) {
   Serial.println(duty);
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
+void callback(char *topic, byte *payload, unsigned int length) {
   String message = "";
+
   for (unsigned int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
 
-  Serial.print("MQTT message received: ");
-  Serial.println(message);
+  Serial.printf("MQTT: (%s) : %s\n", topic, message);
 
-  // Expecting format like "A:75"
+  // Expecting format like "K:75" or "P:50" or "E:25"
   int sepIndex = message.indexOf(':');
   if (sepIndex == -1) {
-    Serial.println("Invalid format. Expected 'Microbe:Resistance' (e.g., A:75)");
+    Serial.println(
+        "Invalid format. Expected 'Microbe:Resistance' (e.g., K:75)");
     return;
   }
 
@@ -102,7 +109,7 @@ void reconnect() {
 
     if (client.connect(clientId.c_str(), mqtt_user, mqtt_password)) {
       Serial.println("connected");
-      client.subscribe(topic_subscribe);
+      client.subscribe(topic_microbe_on);
       client.publish(topic_publish, "ESP connected and listening");
     } else {
       Serial.print("failed, rc=");
@@ -122,7 +129,7 @@ void setup() {
   pinMode(pinC, OUTPUT);
 
   setup_wifi();
-  client.setServer(mqtt_server, mqtt_port);
+  client.setServer(mqtt_srver, mqtt_port);
   client.setCallback(callback);
 }
 

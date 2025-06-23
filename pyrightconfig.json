@@ -1,0 +1,11 @@
+{
+  "pythonVersion": "3.12",
+  "pythonPath": "~/.pyenv/versions/3.12.7/bin/python",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "pythonVersion": "3.12",
+      "pythonPath": "~/.pyenv/versions/3.12.7/bin/python"
+    }
+  ]
+}
