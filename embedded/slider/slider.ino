@@ -139,17 +139,17 @@ void loop() {
 
   float voltage = analogRead(sliderPin);
   // voltage = voltage * 5 / 4095;
-  if (voltage <= 0.35) {
-    year = 2006;
+  if (voltage <= 0.15) {
+    year = 2021;
   }
-  if (voltage > 0.35 && voltage <= 1.20) {
-    year = 2011;
-  }
-  if (voltage > 1.20 && voltage <= 3.00) {
+  if (voltage > 0.15 && voltage <= 1.20) {
     year = 2016;
   }
-  if (voltage > 3.0) {
-    year = 2021;
+  if (voltage > 1.20 && voltage <= 4.5) {
+    year = 2011;
+  }
+  if (voltage > 4.5) {
+    year = 2006;
   }
   if (digitalRead(NL_button) == LOW) {
     country = "NL";
