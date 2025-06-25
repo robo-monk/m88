@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <stdlib.h>
 
 // WiFi credentials
 const char* ssid = "pana";
@@ -13,38 +12,56 @@ const char* mqtt_user = "";
 const char* mqtt_password = "";
 
 // MQTT topics
-// const char* topic_subscribe = "esp32/control";
+const char* topic_publish = "esp32/sensor";
+const char* topic_subscribe = "esp32/control";
 
 // Client objects
 WiFiClient espClient;
 PubSubClient client(espClient);
+#include <FastLED.h>
 
-int sliderPin = 13;
+#define NUN_LEDS 4
+#define LED_Strip 18
+
+int sliderPin = 33;
 int year;
 int NL_button = 17;
 int ES_button = 16;
 int BG_button = 4;
+int start_button = 25;
+
+int buttonState;
+int lastButtonState = LOW;
+
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
+
+bool start = false;
 String country;
 int NL_LED = 12;
 int ES_LED = 14;
 int BG_LED = 27;
+CRGB leds[NUN_LEDS];
 void setup() {
-
-  Serial.begin(115200);
-  // Connect to WiFi
-  setup_wifi();
-  // Configure MQTT
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
-
   // put your setup code here, to run once:
   pinMode(sliderPin, INPUT);
   pinMode(NL_button, INPUT_PULLUP);
   pinMode(ES_button, INPUT_PULLUP);
   pinMode(BG_button, INPUT_PULLUP);
+  pinMode(start_button, INPUT_PULLUP);
   pinMode(NL_LED, OUTPUT);
   pinMode(ES_LED, OUTPUT);
   pinMode(BG_LED, OUTPUT);
+  pinMode(LED_Strip, OUTPUT);
+  Serial.begin(115200);
+  FastLED.addLeds<NEOPIXEL, LED_Strip>(leds, NUN_LEDS);
+
+  // Connect to WiFi
+  setup_wifi();
+
+  // Configure MQTT
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback);
 }
 
 void setup_wifi() {
@@ -97,8 +114,8 @@ void reconnect() {
       // Serial.println(topic_subscribe);
 
       // Publish connection message
+      client.publish(topic_publish, "ESP32 connected");
 
-      client.publish("event/connected", "slider esp");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -107,7 +124,6 @@ void reconnect() {
     }
   }
 }
-
 const int RATE_LIMIT_MS = 1000;
 int lastMsgMs = -1;
 
@@ -124,33 +140,53 @@ void publish_state() {
   Serial.println(country);
 
   char yearStr[6];
-  itoa(year, yearStr, 10); // convert int year to C-string
+  itoa(year, yearStr, 10);  // convert int year to C-string
   client.publish("setvar/year", yearStr);
 
   client.publish("setvar/country", country.c_str());
 }
-
 void loop() {
+
   if (!client.connected()) {
     reconnect();
   }
-
   client.loop();
-
+  int startButtonReading = digitalRead(start_button);
+  fill_solid(leds, NUN_LEDS, CRGB::Black);
   float voltage = analogRead(sliderPin);
-  // voltage = voltage * 5 / 4095;
+  voltage = voltage * 5 / 4095;
   if (voltage <= 0.15) {
     year = 2021;
+    leds[3] = CRGB::Red;
   }
   if (voltage > 0.15 && voltage <= 1.20) {
     year = 2016;
+    leds[2] = CRGB::Red;
   }
   if (voltage > 1.20 && voltage <= 4.5) {
     year = 2011;
+    leds[1] = CRGB::Red;
   }
   if (voltage > 4.5) {
     year = 2006;
+    leds[0] = CRGB::Red;
   }
+
+  if (startButtonReading != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > debounceDelay) {
+    if (startButtonReading != buttonState) {
+      buttonState = startButtonReading;
+
+      if (buttonState == LOW) {
+        start = true;
+        // Serial.println("START");
+      }
+    }
+  }
+
   if (digitalRead(NL_button) == LOW) {
     country = "NL";
     digitalWrite(NL_LED, HIGH);
@@ -169,12 +205,17 @@ void loop() {
     digitalWrite(ES_LED, LOW);
     digitalWrite(BG_LED, HIGH);
   }
+  if (start) {
+    Serial.print(voltage);
+    Serial.print(',');
+    Serial.print(year);
+    Serial.print(',');
+    Serial.println(country);
 
-  Serial.print(voltage);
-  Serial.print(',');
-  Serial.print(year);
-  Serial.print(',');
-  Serial.println(country);
+    publish_state();
+    start = false;
+  }
 
-  publish_state();
+  lastButtonState = startButtonReading;
+  FastLED.show();
 }
