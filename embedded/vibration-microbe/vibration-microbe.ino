@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include "driver/ledc.h"
 
 // ====== WiFi Credentials ======
 const char* ssid = "pana";
@@ -21,21 +20,18 @@ PubSubClient client(espClient);
 // ==== Microbe Buzzing Control ====
 struct MicrobeControl {
   int pin;
-  int channel;
   int dutyCycle;         // 0–100 (% time buzzing per second)
   unsigned long lastToggleTime = 0;
   bool isOn = false;
 };
 
 MicrobeControl microbes[3] = {
-  {25, 0, 0, 0, false}, // K
-  {26, 1, 0, 0, false}, // P
-  {27, 2, 0, 0, false}  // E
+  {25, 0, 0, false}, // K
+  {26, 0, 0, false}, // P
+  {27, 0, 0, false}  // E
 };
 
-const int pwmFreq = 2000;       // 2kHz buzz
-const int pwmResolution = 10;   // 10-bit: 0–1023
-const int cycleDuration = 1000; // 1 second (ms)
+const int cycleDuration = 1000; // Total cycle duration (ms)
 
 void setup_wifi() {
   delay(10);
@@ -57,23 +53,32 @@ void setup_wifi() {
 void stimulateMicrobe(char microbe, int resistance) {
   resistance = constrain(resistance, 0, 100); // Clamp to 0–100%
 
-  int index = -1;
+  int activeIndex = -1;
   switch (toupper(microbe)) {
-    case 'K': index = 0; break;
-    case 'P': index = 1; break;
-    case 'E': index = 2; break;
+    case 'K': activeIndex = 0; break;
+    case 'P': activeIndex = 1; break;
+    case 'E': activeIndex = 2; break;
     default:
       Serial.println("Invalid microbe identifier.");
       return;
   }
 
-  microbes[index].dutyCycle = resistance;
-
-  Serial.print("Microbe ");
-  Serial.print(microbe);
-  Serial.print(" set to ");
-  Serial.print(resistance);
-  Serial.println("% buzz time per second");
+  // Set the requested microbe's duty cycle
+  for (int i = 0; i < 3; i++) {
+    if (i == activeIndex) {
+      microbes[i].dutyCycle = resistance;
+      Serial.print("Microbe ");
+      Serial.print(microbe);
+      Serial.print(" set to ");
+      Serial.print(resistance);
+      Serial.println("% buzz time per second");
+    } else {
+      // Disable all other microbes
+      microbes[i].dutyCycle = 0;
+      digitalWrite(microbes[i].pin, LOW);
+      microbes[i].isOn = false;
+    }
+  }
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -118,13 +123,10 @@ void reconnect() {
 void setup() {
   Serial.begin(115200);
 
-  // Set up PWM channels
   for (int i = 0; i < 3; i++) {
-  //ledcSetup(microbes[i].channel, pwmFreq, pwmResolution);   // ✅ Correct
-  ledcAttach(microbes[i].pin, microbes[i].channel, pwmResolution);       // ✅ Correct
-  ledcWrite(microbes[i].channel, 0);                         // ✅ Correct
-}
-
+    pinMode(microbes[i].pin, OUTPUT);
+    digitalWrite(microbes[i].pin, LOW);
+  }
 
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
@@ -143,33 +145,26 @@ void loop() {
     int value = microbes[i].dutyCycle;
 
     if (value == 0) {
-      // Completely OFF
-      ledcWrite(microbes[i].channel, 0);
+      digitalWrite(microbes[i].pin, LOW);
       microbes[i].isOn = false;
       continue;
     }
 
     if (value == 100) {
-      // Permanently ON at 100% mapped level
-      int duty = map(100, 0, 100, 768, 1023); // 100 → full
-      ledcWrite(microbes[i].channel, duty);
+      digitalWrite(microbes[i].pin, HIGH);
       microbes[i].isOn = true;
       continue;
     }
 
-    // On/Off timing
-    unsigned long onTime = value * 10;               // e.g., 30% → 300ms
+    unsigned long onTime = value * 10;
     unsigned long offTime = cycleDuration - onTime;
 
     if (microbes[i].isOn && currentMillis - microbes[i].lastToggleTime >= onTime) {
-      // Turn OFF
-      ledcWrite(microbes[i].channel, 0);
+      digitalWrite(microbes[i].pin, LOW);
       microbes[i].isOn = false;
       microbes[i].lastToggleTime = currentMillis;
     } else if (!microbes[i].isOn && currentMillis - microbes[i].lastToggleTime >= offTime) {
-      // Turn ON with mapped duty
-      int duty = map(value, 0, 100, 768, 1023); // 75% to 100%
-      ledcWrite(microbes[i].channel, duty);
+      digitalWrite(microbes[i].pin, HIGH);
       microbes[i].isOn = true;
       microbes[i].lastToggleTime = currentMillis;
     }
