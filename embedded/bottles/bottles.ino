@@ -23,6 +23,8 @@ PubSubClient client(espClient);
 // NFC
 #define SS_PIN 5
 #define RST_PIN 21
+#define BUTTON_PIN 13
+
 int tag = 0;
 
 // magnets
@@ -44,6 +46,7 @@ void setup() {
   mfrc522.PCD_Init();
   Serial.println("Scan an RFID tag...");
 
+  pinMode(BUTTON_PIN, INPUT_PULLUP); 
   pinMode(magnetPin, OUTPUT);
 }
 
@@ -118,6 +121,12 @@ void loop() {
 
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
+
+  //Button
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    client.publish("event/start", "");
+    delay(500); 
+  }
 }
 
 void setup_wifi() {
