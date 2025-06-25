@@ -14,13 +14,14 @@ const char *mqtt_password = "";
 const char *topic_publish = "esp32/sensor";
 const char *topic_microbe_on = "event/microbe-on";
 
+
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 // Use GPIO numbers directly for ESP32
-const int pinA = 25; // Microbe A → GPIO5
-const int pinB = 26; // Microbe B → GPIO4
-const int pinC = 27; // Microbe C → GPIO0
+const int pinK = 25; // Microbe A → GPIO5
+const int pinP = 26; // Microbe B → GPIO4
+const int pinE = 27; // Microbe C → GPIO0
 
 int currentPWMpin = -1;
 
@@ -49,13 +50,13 @@ void stimulateMicrobe(char microbe, int resistance) {
   int selectedPin = -1;
   switch (toupper(microbe)) {
   case 'K':
-    selectedPin = pinA;
+    selectedPin = pinK;
     break;
   case 'P':
-    selectedPin = pinB;
+    selectedPin = pinP;
     break;
   case 'E':
-    selectedPin = pinC;
+    selectedPin = pinE;
     break;
   default:
     Serial.println("Invalid microbe identifier.");
@@ -63,9 +64,9 @@ void stimulateMicrobe(char microbe, int resistance) {
   }
 
   // Reset other PWM pins
-  analogWrite(pinA, 0);
-  analogWrite(pinB, 0);
-  analogWrite(pinC, 0);
+  analogWrite(pinK, 0);
+  analogWrite(pinP, 0);
+  analogWrite(pinE, 0);
 
   // Convert resistance to PWM duty (0–1023 for ESP8266)
   int duty = map(resistance, 0, 100, 0, 1023);
@@ -124,9 +125,9 @@ void setup() {
   Serial.begin(115200);
 
   // Set pin modes
-  pinMode(pinA, OUTPUT);
-  pinMode(pinB, OUTPUT);
-  pinMode(pinC, OUTPUT);
+  pinMode(pinK, OUTPUT);
+  pinMode(pinP, OUTPUT);
+  pinMode(pinE, OUTPUT);
 
   setup_wifi();
   client.setServer(mqtt_srver, mqtt_port);
@@ -138,6 +139,4 @@ void loop() {
     reconnect();
   }
   client.loop();
-
-  // You could publish sensor data here if desired
 }
