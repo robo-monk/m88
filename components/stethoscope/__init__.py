@@ -9,8 +9,13 @@ import threading
 import numpy as np
 import json
 import pygame
+from paho.mqtt import client as mqtt_client
+import pandas as pd
+from state import Bacteria, Country, state
 
-OUTPUT_DIR = "thresholds"
+OUTPUT_DIR = "components/stethoscope/thresholds"
+
+df = pd.read_csv("components/stethoscope/body_sounds.csv")
 
 def user_select_port():
     port = ""
@@ -46,7 +51,7 @@ def user_select_port():
  #
 
 
-BUFFERS_LEN = 50
+BUFFERS_LEN = 25
 sensor_values = {}
 sensor_baselines = {}
 sensor_thresholds = {}
@@ -55,7 +60,7 @@ sensor_positions = {}
 sensor_counts = {}
 
 # Global level variable (1-4)
-level = 4
+# level = 4
 
 # Sound management
 pygame.mixer.init()
@@ -76,12 +81,37 @@ def play_sensor_sound(sensor_alias):
     if current_sound_channel and current_sound_channel.get_busy():
         current_sound_channel.stop()
 
+    print("finding level for ", state.bacteria, state.year, state.country)
+    # find where Pathogen = state.bacteria and Year = state.year and get [sensor_alias] column
+    row_df = df.loc[(df["Pathogen"] == state.bacteria.to_capitalized()) & (df["Year"] == state.year) & (df["Location"] == state.country.to_camelcase())]
+
+    if row_df.empty:
+        print(f"Warning: no entry found for {state.bacteria}, {state.year}, {state.country.to_camelcase()}")
+        return
+
+    raw_level = row_df[sensor_alias].iloc[0]
+    
+    print(f"Raw level for {sensor_alias}: {raw_level}")
+
+    # if raw_level == 0:
+    stop_all_sounds()
+        # return
+
+    # The rank is from 1 to 12, we need to map it to a sound level from 1 to 4
+    # Level 1: 1-3, Level 2: 4-6, Level 3: 7-9, Level 4: 10-12
+    # level = ((raw_level - 1) // 3) + 1
+    level = max(min(raw_level // 4, 1), 4)
+    print("sound level is: ", level)
+    
+    assert level in [1, 2, 3, 4], f"Calculated level {level} is not valid"
+
     # Load and play the new sound
-    sound_file = f"sounds/{sensor_alias}/{sensor_alias}Level{level}.wav"
+    sound_file = f"components/stethoscope/sounds/{sensor_alias}/{sensor_alias}Level{level}.wav"
     if os.path.exists(sound_file):
         try:
             current_sound = pygame.mixer.Sound(sound_file)
             current_sound_channel = pygame.mixer.Channel(0)
+            current_sound_channel.set_volume(2.5)
             current_sound_channel.play(current_sound)
             last_active_sensor = sensor_alias
             print(f"Playing: {sound_file}")
@@ -133,6 +163,20 @@ def get_sensor_values(sensor_index):
 
 
 
+def mqtt_parser(client: mqtt_client.Client):
+    # client.subscribe("setvar/light-value")
+    def on_message(client, userdata, message):
+        # print("-> stetho message", message)
+        if message.topic == "setvar/light-value":
+            values = message.payload.decode().split(",")
+            for i, value in enumerate(values):
+                if len(value) > 0:
+                    add_sensor_value(i, float(value))
+
+    client.message_callback_add("setvar/light-value", on_message)
+    client.on_message = on_message
+    # client.loop_start()
+
 def serial_parser(port, baudrate):
     print("Initialising serial parser with at", port, baudrate)
     ser = serial.Serial(port, baudrate, timeout=10)
@@ -147,7 +191,7 @@ def serial_parser(port, baudrate):
 
         # print(line);
 
-def get_current_sensor_state(last_n=5, tolerance=0.7):
+def get_current_sensor_state(last_n=4, tolerance=0.7):
     state = {}
     for i, sv in sensor_values.items():
         last_mean = sv[-last_n:].mean()
@@ -226,6 +270,7 @@ def wait_for_buffers_to_fill():
     print(f"Hz per buffer: {hz_per_buffer:.2f}")
 
 def calibrate():
+    print("Calibrating...")
     os.makedirs(OUTPUT_DIR, exist_ok = True)
 
     sensors_aliases = ["Throat", "Heart", "Lungs", "Bowel"]
@@ -264,23 +309,29 @@ def calibrate():
     print("Calibration complete! Sensor state has been saved.")
 
 
-def run():
+def run(client, _calibrate=False):
+    print("Starting monitoring with loaded sensor state...")
+    serial_thread = threading.Thread(target=mqtt_parser(client))
+    serial_thread.start()
+    wait_for_buffers_to_fill()
+
+    if _calibrate:
+        calibrate()
+
     if not load_sensor_state():
         print("No calibrated sensor state found!")
         print("Please run the calibrate command first:")
-        print(f"python {__file__} calibrate -p {port}")
+        # print(f"python {__file__} calibrate -p {port}")
         exit(1)
 
     # Validate that we have complete sensor configuration
     if not sensor_baselines or not sensor_thresholds or not sensor_mappings:
         print("Incomplete sensor configuration loaded!")
         print("Please recalibrate by running:")
-        print(f"python {__file__} calibrate -p {port}")
+        # print(f"python {__file__} calibrate -p {port}")
         exit(1)
 
-    print("Starting monitoring with loaded sensor state...")
-    serial_thread.start()
-    wait_for_buffers_to_fill()
+
 
     # Main monitoring loop
     try:
@@ -313,37 +364,38 @@ def run():
 
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Stethoscope simulator")
-    parser.add_argument("command", nargs="?", help="calibrate | run | status")
-    parser.add_argument("-p", "--port", help="Serial port to use (e.g., COM3)")
-    parser.add_argument("-b", "--baudrate", help="Baudrate to use (defaults to 115200)", default=115200)
-    args = parser.parse_args()
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(description="Stethoscope simulator")
+#     parser.add_argument("command", nargs="?", help="calibrate | run | status")
+#     parser.add_argument("-p", "--port", help="Serial port to use (e.g., COM3)")
+#     parser.add_argument("-b", "--baudrate", help="Baudrate to use (defaults to 115200)", default=115200)
+#     args = parser.parse_args()
 
-    port = args.port
-    if not port:
-        port = user_select_port()
+#     port = args.port
+#     if not port:
+#         port = user_select_port()
 
-    serial_thread = threading.Thread(target=serial_parser, args=(port, args.baudrate))
-    # serial_parser(port, args.baudrate)
+#     serial_thread = threading.Thread(target=serial_parser, args=(port, args.baudrate))
+#     # serial_parser(port, args.baudrate)
 
-    if args.command == "calibrate":
-        print("Initializing calibrating sequence")
-        serial_thread.start()
-        print("Waiting for baseline values...")
-        calibrate()
-    elif args.command == "run":
-        print("Loading sensor state...")
-        run()
-    elif args.command == "status":
-        print("Checking sensor calibration status...")
-        if load_sensor_state():
-            print("✓ Sensor calibration found and loaded successfully")
-        else:
-            print("✗ No sensor calibration found")
-            print("Please run the calibrate command first:")
-            print(f"python {__file__} calibrate")
+#     if args.command == "calibrate":
+#         print("Initializing calibrating sequence")
+#         serial_thread.start()
+#         print("Waiting for baseline values...")
+#         calibrate()
+#     elif args.command == "run":
+#         print("Loading sensor state...")
+#         run()
+#     elif args.command == "status":
+#         print("Checking sensor calibration status...")
+#         if load_sensor_state():
+#             print("✓ Sensor calibration found and loaded successfully")
+#         else:
+#             print("✗ No sensor calibration found")
+#             print("Please run the calibrate command first:")
+#             print(f"python {__file__} calibrate")
 
-    else:
-        print("Command not supported: ", args.command)
-        parser.print_help()
+#     else:
+#         print("Command not supported: ", args.command)
+#         parser.print_help()
+

@@ -33,6 +33,14 @@ def get_value_from_csv(state: State) -> float | None:
         raise KeyError(f"Missing column in CSV: {e}")
 
 def vibration_microbe(state: State, client):
+    file_bacteria_map = {
+        Bacteria.KLEBSIA: "klebsia",
+        Bacteria.PSEUDO: "pseudo",
+        Bacteria.ECOLI: "ecoli",
+    }
+    file_name = f"data/vibration-microbe/{file_bacteria_map[state.bacteria]}.csv"
+
+
     map = {
         Bacteria.KLEBSIA: "K",
         Bacteria.PSEUDO: "P",
@@ -43,4 +51,4 @@ def vibration_microbe(state: State, client):
 
     value = get_value_from_csv(state)
     current_strength = value if value is not None else 0  # fallback to 0 if no value
-    client.send("event/microbe-on", f"{map[state.bacteria]}:{current_strength}")
+    client.publish("event/microbe-on", f"{map[state.bacteria]}:{current_strength}")
