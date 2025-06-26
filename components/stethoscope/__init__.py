@@ -17,6 +17,7 @@ OUTPUT_DIR = "components/stethoscope/thresholds"
 
 df = pd.read_csv("components/stethoscope/body_sounds.csv")
 
+
 def user_select_port():
     port = ""
     ports = list(serial.tools.list_ports.comports())
@@ -32,23 +33,24 @@ def user_select_port():
     print("Using port :: ", port)
     return port
 
- # Create output directory if it doesn't exist
- # os.makedirs(output_dir, exist_ok=True)
 
- # # Configure serial connection
- # ser = serial.Serial(port, 921600, timeout=10)
- # print(f"Connected to {port} at 921600 baud")
+# Create output directory if it doesn't exist
+# os.makedirs(output_dir, exist_ok=True)
 
- # # Wait for initial message
- # print("Waiting for ESP32...")
- # while True:
- #     line = ser.readline().decode('utf-8', errors='ignore').strip()
- #     print(f"Received: {line}")
- #     if "MPU6050 initialized" in line:
- #         break
+# # Configure serial connection
+# ser = serial.Serial(port, 921600, timeout=10)
+# print(f"Connected to {port} at 921600 baud")
 
- # hit_count = 0
- #
+# # Wait for initial message
+# print("Waiting for ESP32...")
+# while True:
+#     line = ser.readline().decode('utf-8', errors='ignore').strip()
+#     print(f"Received: {line}")
+#     if "MPU6050 initialized" in line:
+#         break
+
+# hit_count = 0
+#
 
 
 BUFFERS_LEN = 25
@@ -68,13 +70,14 @@ current_sound = None
 current_sound_channel = None
 last_active_sensor = None
 
+
 def play_sensor_sound(sensor_alias):
     """Play sound for a specific sensor based on current level"""
     global current_sound, current_sound_channel, last_active_sensor
 
     # If the same sensor is still active and sound is playing, do nothing
     if (last_active_sensor == sensor_alias and
-        current_sound_channel and current_sound_channel.get_busy()):
+            current_sound_channel and current_sound_channel.get_busy()):
         return
 
     # Stop any currently playing sound
@@ -83,27 +86,35 @@ def play_sensor_sound(sensor_alias):
 
     print("finding level for ", state.bacteria, state.year, state.country)
     # find where Pathogen = state.bacteria and Year = state.year and get [sensor_alias] column
-    row_df = df.loc[(df["Pathogen"] == state.bacteria.to_capitalized()) & (df["Year"] == state.year) & (df["Location"] == state.country.to_camelcase())]
+    row_df = df.loc[
+        (df["Pathogen"] == state.bacteria.to_capitalized()) &
+        (df["Year"] == state.year) &
+        (df["Location"] == state.country.to_camelcase())
+    ]
 
     if row_df.empty:
         print(f"Warning: no entry found for {state.bacteria}, {state.year}, {state.country.to_camelcase()}")
         return
 
     raw_level = row_df[sensor_alias].iloc[0]
-    
     print(f"Raw level for {sensor_alias}: {raw_level}")
 
-    # if raw_level == 0:
+    # Stop all sounds if raw_level is 0 and play level 1 (lowest)
     stop_all_sounds()
-        # return
 
-    # The rank is from 1 to 12, we need to map it to a sound level from 1 to 4
-    # Level 1: 1-3, Level 2: 4-6, Level 3: 7-9, Level 4: 10-12
-    # level = ((raw_level - 1) // 3) + 1
-    level = max(min(raw_level // 4, 1), 4)
-    print("sound level is: ", level)
-    
-    assert level in [1, 2, 3, 4], f"Calculated level {level} is not valid"
+    # Map raw level to sound level based on new logic
+    if raw_level == 0:
+        level = 1
+    elif 1 <= raw_level <= 4:
+        level = 2
+    elif 5 <= raw_level <= 8:
+        level = 3
+    elif 9 <= raw_level <= 12:
+        level = 4
+    else:
+        raise ValueError(f"Unexpected raw_level: {raw_level}")
+
+    print("Sound level is: ", level)
 
     # Load and play the new sound
     sound_file = f"components/stethoscope/sounds/{sensor_alias}/{sensor_alias}Level{level}.wav"
@@ -119,6 +130,8 @@ def play_sensor_sound(sensor_alias):
             print(f"Error playing sound {sound_file}: {e}")
     else:
         print(f"Sound file not found: {sound_file}")
+
+
 
 def stop_all_sounds():
     """Stop all currently playing sounds"""
@@ -145,6 +158,7 @@ def add_sensor_value(sensor_index, sensor_value):
     if sensor_counts[sensor_index] < BUFFERS_LEN:
         sensor_counts[sensor_index] += 1
 
+
 def get_sensor_values(sensor_index):
     """Get the sensor values in chronological order (oldest to newest)"""
     if sensor_index not in sensor_values:
@@ -162,7 +176,6 @@ def get_sensor_values(sensor_index):
         return np.concatenate([arr[pos:], arr[:pos]])
 
 
-
 def mqtt_parser(client: mqtt_client.Client):
     # client.subscribe("setvar/light-value")
     def on_message(client, userdata, message):
@@ -176,6 +189,7 @@ def mqtt_parser(client: mqtt_client.Client):
     client.message_callback_add("setvar/light-value", on_message)
     client.on_message = on_message
     # client.loop_start()
+
 
 def serial_parser(port, baudrate):
     print("Initialising serial parser with at", port, baudrate)
@@ -191,12 +205,13 @@ def serial_parser(port, baudrate):
 
         # print(line);
 
+
 def get_current_sensor_state(last_n=4, tolerance=0.7):
     state = {}
     for i, sv in sensor_values.items():
         last_mean = sv[-last_n:].mean()
         # print("i -> ", last_mean)
-        state[i] = last_mean < (sensor_baselines[i] - sensor_thresholds[i]*tolerance)
+        state[i] = last_mean < (sensor_baselines[i] - sensor_thresholds[i] * tolerance)
 
     # print("---")
 
@@ -204,6 +219,8 @@ def get_current_sensor_state(last_n=4, tolerance=0.7):
 
 
 STATE_FILE = "sensor_state.json"
+
+
 def save_sensor_state():
     """Save sensor baselines, thresholds, and mappings to JSON file"""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -219,6 +236,7 @@ def save_sensor_state():
         json.dump(state, f, indent=2)
 
     print(f"Sensor state saved to {state_file_path}")
+
 
 def load_sensor_state():
     """Load sensor baselines, thresholds, and mappings from JSON file"""
@@ -238,7 +256,8 @@ def load_sensor_state():
         sensor_mappings = {int(k): v for k, v in state.get("sensor_mappings", {}).items()}
 
         print(f"Sensor state loaded from {state_file_path}")
-        print(f"Loaded {len(sensor_baselines)} baselines, {len(sensor_thresholds)} thresholds, {len(sensor_mappings)} mappings")
+        print(
+            f"Loaded {len(sensor_baselines)} baselines, {len(sensor_thresholds)} thresholds, {len(sensor_mappings)} mappings")
 
         # Display loaded configuration
         print("\nLoaded sensor configuration:")
@@ -252,6 +271,7 @@ def load_sensor_state():
     except Exception as e:
         print(f"Error loading sensor state: {e}")
         return False
+
 
 def wait_for_buffers_to_fill():
     start_time = time.time()
@@ -269,9 +289,10 @@ def wait_for_buffers_to_fill():
     hz_per_buffer = BUFFERS_LEN / elapsed_time
     print(f"Hz per buffer: {hz_per_buffer:.2f}")
 
+
 def calibrate():
     print("Calibrating...")
-    os.makedirs(OUTPUT_DIR, exist_ok = True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     sensors_aliases = ["Throat", "Heart", "Lungs", "Bowel"]
     wait_for_buffers_to_fill()
@@ -331,15 +352,13 @@ def run(client, _calibrate=False):
         # print(f"python {__file__} calibrate -p {port}")
         exit(1)
 
-
-
     # Main monitoring loop
     try:
         while True:
             if sensor_values:
                 state = get_current_sensor_state()
                 active_sensors = {sensor_mappings.get(i, f"Sensor_{i}"): active
-                                for i, active in state.items() if active}
+                                  for i, active in state.items() if active}
 
                 if active_sensors:
                     # Get the first active sensor
@@ -352,17 +371,14 @@ def run(client, _calibrate=False):
 
                 # Check if current sound finished and sensor is still active
                 if (last_active_sensor and
-                    current_sound_channel and not current_sound_channel.get_busy() and
-                    active_sensors.get(last_active_sensor, False)):
+                        current_sound_channel and not current_sound_channel.get_busy() and
+                        active_sensors.get(last_active_sensor, False)):
                     # Restart the sound
                     play_sensor_sound(last_active_sensor)
 
             sleep(0.1)
     except KeyboardInterrupt:
         print("\nMonitoring stopped.")
-
-
-
 
 # if __name__ == "__main__":
 #     parser = argparse.ArgumentParser(description="Stethoscope simulator")
