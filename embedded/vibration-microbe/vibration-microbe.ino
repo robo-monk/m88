@@ -1,29 +1,37 @@
-#include <PubSubClient.h>
 #include <WiFi.h>
+#include <PubSubClient.h>
 
 // ====== WiFi Credentials ======
-const char *ssid = "pana";
-const char *password = "bingbong8202";
+const char* ssid = "pana";
+const char* password = "bingbong8202";
 
 // ====== MQTT Settings ======
-const char *mqtt_server = "192.168.1.235";
+const char* mqtt_server = "192.168.1.235";
 const int mqtt_port = 1883;
-const char *mqtt_user = "";
-const char *mqtt_password = "";
+const char* mqtt_user = "";
+const char* mqtt_password = "";
 
-const char *topic_publish = "esp32/sensor";
-const char *topic_microbe_on = "event/microbe-on";
-
+const char* topic_publish = "esp32/sensor";
+const char* topic_subscribe = "event/microbe-on";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// Use GPIO numbers directly for ESP32
-const int pinK = 25; // Microbe A → GPIO5
-const int pinP = 26; // Microbe B → GPIO4
-const int pinE = 27; // Microbe C → GPIO0
+// ==== Microbe Buzzing Control ====
+struct MicrobeControl {
+  int pin;
+  int dutyCycle;         // 0–100 (% time buzzing per second)
+  unsigned long lastToggleTime = 0;
+  bool isOn = false;
+};
 
-int currentPWMpin = -1;
+MicrobeControl microbes[3] = {
+  {25, 0, 0, false}, // K
+  {26, 0, 0, false}, // P
+  {27, 0, 0, false}  // E
+};
+
+const int cycleDuration = 1000; // Total cycle duration (ms)
 
 void setup_wifi() {
   delay(10);
@@ -37,63 +45,54 @@ void setup_wifi() {
     Serial.print(".");
   }
 
-  Serial.println("");
-  Serial.println("WiFi connected");
+  Serial.println("\nWiFi connected");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 }
 
 void stimulateMicrobe(char microbe, int resistance) {
-  resistance = constrain(resistance, 0, 100); // clamp to 0–100
+  resistance = constrain(resistance, 0, 100); // Clamp to 0–100%
 
-  // Determine output pin
-  int selectedPin = -1;
+  int activeIndex = -1;
   switch (toupper(microbe)) {
-  case 'K':
-    selectedPin = pinK;
-    break;
-  case 'P':
-    selectedPin = pinP;
-    break;
-  case 'E':
-    selectedPin = pinE;
-    break;
-  default:
-    Serial.println("Invalid microbe identifier.");
-    return;
+    case 'K': activeIndex = 0; break;
+    case 'P': activeIndex = 1; break;
+    case 'E': activeIndex = 2; break;
+    default:
+      Serial.println("Invalid microbe identifier.");
+      return;
   }
 
-  // Reset other PWM pins
-  analogWrite(pinK, 0);
-  analogWrite(pinP, 0);
-  analogWrite(pinE, 0);
-
-  // Convert resistance to PWM duty (0–1023 for ESP8266)
-  int duty = map(resistance, 0, 100, 0, 1023);
-  analogWrite(selectedPin, duty);
-
-  Serial.print("Microbe ");
-  Serial.print(microbe);
-  Serial.print(" on pin ");
-  Serial.print(selectedPin);
-  Serial.print(" stimulated with duty ");
-  Serial.println(duty);
+  // Set the requested microbe's duty cycle
+  for (int i = 0; i < 3; i++) {
+    if (i == activeIndex) {
+      microbes[i].dutyCycle = resistance;
+      Serial.print("Microbe ");
+      Serial.print(microbe);
+      Serial.print(" set to ");
+      Serial.print(resistance);
+      Serial.println("% buzz time per second");
+    } else {
+      // Disable all other microbes
+      microbes[i].dutyCycle = 0;
+      digitalWrite(microbes[i].pin, LOW);
+      microbes[i].isOn = false;
+    }
+  }
 }
 
-void callback(char *topic, byte *payload, unsigned int length) {
+void callback(char* topic, byte* payload, unsigned int length) {
   String message = "";
-
   for (unsigned int i = 0; i < length; i++) {
     message += (char)payload[i];
   }
 
-  Serial.printf("MQTT: (%s) : %s\n", topic, message);
+  Serial.print("MQTT message received: ");
+  Serial.println(message);
 
-  // Expecting format like "K:75" or "P:50" or "E:25"
   int sepIndex = message.indexOf(':');
   if (sepIndex == -1) {
-    Serial.println(
-        "Invalid format. Expected 'Microbe:Resistance' (e.g., K:75)");
+    Serial.println("Invalid format. Expected 'Microbe:Resistance' (e.g., K:75)");
     return;
   }
 
@@ -110,7 +109,7 @@ void reconnect() {
 
     if (client.connect(clientId.c_str(), mqtt_user, mqtt_password)) {
       Serial.println("connected");
-      client.subscribe(topic_microbe_on);
+      client.subscribe(topic_subscribe);
       client.publish(topic_publish, "ESP connected and listening");
     } else {
       Serial.print("failed, rc=");
@@ -124,13 +123,13 @@ void reconnect() {
 void setup() {
   Serial.begin(115200);
 
-  // Set pin modes
-  pinMode(pinK, OUTPUT);
-  pinMode(pinP, OUTPUT);
-  pinMode(pinE, OUTPUT);
+  for (int i = 0; i < 3; i++) {
+    pinMode(microbes[i].pin, OUTPUT);
+    digitalWrite(microbes[i].pin, LOW);
+  }
 
   setup_wifi();
-  client.setServer(mqtt_srver, mqtt_port);
+  client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
 }
 
@@ -139,4 +138,35 @@ void loop() {
     reconnect();
   }
   client.loop();
+
+  unsigned long currentMillis = millis();
+
+  for (int i = 0; i < 3; i++) {
+    int value = microbes[i].dutyCycle;
+
+    if (value == 0) {
+      digitalWrite(microbes[i].pin, LOW);
+      microbes[i].isOn = false;
+      continue;
+    }
+
+    if (value == 100) {
+      digitalWrite(microbes[i].pin, HIGH);
+      microbes[i].isOn = true;
+      continue;
+    }
+
+    unsigned long onTime = value * 10;
+    unsigned long offTime = cycleDuration - onTime;
+
+    if (microbes[i].isOn && currentMillis - microbes[i].lastToggleTime >= onTime) {
+      digitalWrite(microbes[i].pin, LOW);
+      microbes[i].isOn = false;
+      microbes[i].lastToggleTime = currentMillis;
+    } else if (!microbes[i].isOn && currentMillis - microbes[i].lastToggleTime >= offTime) {
+      digitalWrite(microbes[i].pin, HIGH);
+      microbes[i].isOn = true;
+      microbes[i].lastToggleTime = currentMillis;
+    }
+  }
 }
